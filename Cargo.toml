@@ -1,0 +1,9 @@
+[package]
+name = "rust-dbus"
+version = "0.1.0"
+authors = ["石博文 <sbw@sbw.so>"]
+
+[dependencies]
+clippy = "*"
+dbus = "*"
+gio-sys = "*"
