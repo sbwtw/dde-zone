@@ -6,4 +6,9 @@ authors = ["石博文 <sbw@sbw.so>"]
 [dependencies]
 clippy = "*"
 dbus = "*"
-gio-sys = "*"
+
+[dependencies.gio]
+git = "https://github.com/gtk-rs/gio.git"
+
+[dependencies.gtk]
+git = "https://github.com/gtk-rs/gtk.git"

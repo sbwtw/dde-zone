@@ -1,10 +1,11 @@
 
 extern crate dbus;
-extern crate gio_sys;
+extern crate gio;
+extern crate gtk;
 
 use std::cell::RefCell;
-use std::ffi::CStr;
-use std::ffi::CString;
+use std::thread;
+use std::ops::Drop;
 
 use dbus::Connection;
 use dbus::ConnectionItem;
@@ -18,9 +19,7 @@ use dbus::tree::MethodErr;
 // use dbus::tree::Tree;
 // use dbus::tree::MethodFn;
 
-use gio_sys::GSettings;
-use gio_sys::g_settings_new;
-use gio_sys::g_settings_get_string;
+use gio::Settings;
 
 struct Zone {
     zone_detected: bool,
@@ -29,16 +28,11 @@ struct Zone {
     top_left_action: String,
     top_right_action: String,
 
-    settings: *mut GSettings,
+    settings: Settings,
 }
 
 impl Zone {
     fn new() -> Zone {
-        let settings;
-        unsafe {
-            settings = g_settings_new(CString::new("com.deepin.dde.zone").unwrap().as_ptr());
-        }
-
         let mut zone = Zone {
             zone_detected: false,
             bottom_left_action: String::new(),
@@ -46,34 +40,30 @@ impl Zone {
             top_left_action: String::new(),
             top_right_action: String::new(),
 
-            settings: settings,
+            settings: Settings::new("com.deepin.dde.zone"),
         };
+
+        zone.settings.connect_changed(|se, st| {
+            println!("{:?}", se);
+            println!("{:?}", st);
+        });
 
         zone.load_settings();
         zone
     }
 
     fn load_settings(&mut self) {
-        let top_left_action;
-        let top_right_action;
-        let bottom_left_action;
-        let bottom_right_action;
+        self.top_left_action = self.settings.get_string("left-up").unwrap();
+        self.top_right_action = self.settings.get_string("right-up").unwrap();
+        self.bottom_left_action = self.settings.get_string("left-down").unwrap();
+        self.bottom_right_action = self.settings.get_string("right-down").unwrap();
+    }
 
-        unsafe {
-            let raw_str = g_settings_get_string(self.settings, CString::new("left-up").unwrap().as_ptr());
-            top_left_action = CStr::from_ptr(raw_str);
-            let raw_str = g_settings_get_string(self.settings, CString::new("right-up").unwrap().as_ptr());
-            top_right_action = CStr::from_ptr(raw_str);
-            let raw_str = g_settings_get_string(self.settings, CString::new("left-down").unwrap().as_ptr());
-            bottom_left_action = CStr::from_ptr(raw_str);
-            let raw_str = g_settings_get_string(self.settings, CString::new("right-down").unwrap().as_ptr());
-            bottom_right_action = CStr::from_ptr(raw_str);
-        }
-
-        self.top_left_action = top_left_action.to_string_lossy().into_owned();
-        self.top_right_action = top_right_action.to_string_lossy().into_owned();
-        self.bottom_left_action = bottom_left_action.to_string_lossy().into_owned();
-        self.bottom_right_action = bottom_right_action.to_string_lossy().into_owned();
+    fn save_settings(&mut self) -> bool {
+        self.settings.set_string("left-up", self.top_left_action.as_str()) &&
+        self.settings.set_string("right-up", self.top_right_action.as_str()) &&
+        self.settings.set_string("left-down", self.bottom_left_action.as_str()) &&
+        self.settings.set_string("right-down", self.bottom_right_action.as_str())
     }
 
     fn set_detected(&mut self, m: &Message) -> MethodResult {
@@ -138,8 +128,13 @@ impl Zone {
     }
 }
 
-fn main() {
+impl Drop for Zone {
+    fn drop(&mut self) {
+        self.save_settings();
+    }
+}
 
+fn create_dbus_service() {
     let zone = RefCell::new(Zone::new());
 
     let c = Connection::get_private(BusType::Session).unwrap();
@@ -197,4 +192,13 @@ fn main() {
             },
         }
     }
+}
+
+fn main() {
+
+    gtk::init().unwrap();
+
+    thread::spawn(create_dbus_service);
+
+    gtk::main();
 }
