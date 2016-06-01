@@ -6,18 +6,19 @@ extern crate gtk;
 use std::cell::RefCell;
 use std::thread;
 use std::ops::Drop;
+use std::sync::Arc;
+use std::iter::IntoIterator;
 
 use dbus::Connection;
 use dbus::ConnectionItem;
 use dbus::BusType;
 use dbus::NameFlag;
 use dbus::Message;
+use dbus::MessageItem;
+use dbus::tree::Signal;
 use dbus::tree::MethodResult;
 use dbus::tree::Factory;
 use dbus::tree::MethodErr;
-// use dbus::tree::ObjectPath;
-// use dbus::tree::Tree;
-// use dbus::tree::MethodFn;
 
 use gio::Settings;
 
@@ -27,6 +28,9 @@ struct Zone {
     bottom_right_action: String,
     top_left_action: String,
     top_right_action: String,
+
+    connection: Connection,
+    s: RefCell<Option<Arc<Signal>>>,
 
     settings: Settings,
 }
@@ -39,6 +43,9 @@ impl Zone {
             bottom_right_action: String::new(),
             top_left_action: String::new(),
             top_right_action: String::new(),
+
+            connection: Connection::get_private(BusType::Session).unwrap(),
+            s: RefCell::new(None),
 
             settings: Settings::new("com.deepin.dde.zone"),
         };
@@ -115,6 +122,16 @@ impl Zone {
     }
 
     fn top_right_action(&mut self, m: &Message) -> MethodResult {
+
+        let mut v: Vec<Result<(String, MessageItem), &str>> = vec![];
+        v.push(Ok(("a".into(), 3i32.into())));
+        v.push(Ok(("b".into(), 2i32.into())));
+
+        let msg = MessageItem::from_dict(v.into_iter()).unwrap();
+
+        let s = self.s.borrow().as_ref().unwrap().emit(&vec!(msg));
+        let _ = self.connection.send(s);
+
         Ok(vec!(m.method_return().append(self.top_right_action.clone())))
     }
 
@@ -138,7 +155,7 @@ fn create_dbus_service() {
     let zone = RefCell::new(Zone::new());
 
     let c = Connection::get_private(BusType::Session).unwrap();
-    c.register_name("com.deepin.daemon.Zone1", NameFlag::ReplaceExisting as u32).unwrap();
+    c.register_name("com.deepin.daemon.Zone2", NameFlag::ReplaceExisting as u32).unwrap();
 
     let f = Factory::new_fn();
     let zone_detected = f.method("EnableZoneDetected", |m, _, _| {
@@ -169,15 +186,21 @@ fn create_dbus_service() {
         zone.borrow_mut().set_top_right(m)
     }).inarg::<&str, _>("action");
 
-    let inter = f.interface("com.deepin.daemon.Zone").add_m(zone_detected)
-                                                     .add_m(bottom_left_action)
-                                                     .add_m(set_bottom_left)
-                                                     .add_m(bottom_right_action)
-                                                     .add_m(set_bottom_right)
-                                                     .add_m(top_left_action)
-                                                     .add_m(set_top_left)
-                                                     .add_m(top_right_action)
-                                                     .add_m(set_top_right);
+    let mut inter = f.interface("com.deepin.daemon.Zone");
+
+    // create signals
+    let mut z = zone.borrow_mut();
+    *z.s.borrow_mut() = Some(inter.add_s_ref(f.signal("TestSignal").arg(("arg", "a{sd}"))));
+
+    let inter = inter.add_m(zone_detected)
+                     .add_m(bottom_left_action)
+                     .add_m(set_bottom_left)
+                     .add_m(bottom_right_action)
+                     .add_m(set_bottom_right)
+                     .add_m(top_left_action)
+                     .add_m(set_top_left)
+                     .add_m(top_right_action)
+                     .add_m(set_top_right);
 
     let path = f.object_path("/com/deepin/daemon/Zone").introspectable().add(inter);
     let tree = f.tree().add(path);
@@ -186,7 +209,8 @@ fn create_dbus_service() {
 
     for item in tree.run(&c, c.iter(1000)) {
         match item {
-            ConnectionItem::Nothing => {},
+            ConnectionItem::Nothing => {
+            },
             _ => {
                 println!("{:?}", item);
             },
